@@ -11,7 +11,6 @@ from Xlib import Xatom
 from Xlib.display import Display
 from Xlib.protocol.event import ClientMessage
 from types import SimpleNamespace
-# from frozendict import frozendict
 # from Xlib.ext import xinerama
 # from Xlib.display import colormap
 
@@ -68,6 +67,12 @@ class Client:
             self.window.change_property(NET_WM_STATE, Xatom.ATOM, 32, (1, 1))
             self.isfullscreen = False
             self.monitor.arrange()
+
+    def updatesizehints(self):
+        return NotImplemented
+
+    def updatewmhints(self):
+        return NotImplemented
 
 
 class Monitor:
@@ -141,6 +146,7 @@ class WM:
         self.screenheight = self.root.get_geometry().height
         self.monitors = []
         self._selmon = None
+        self.numlockmask = 0
         self.keys = keys
         self.layouts = layouts
         self.updategeometry()
@@ -168,6 +174,7 @@ class WM:
                 else:
                     self.selmon.createclient(window)
         self.arrange(self.monitors[0])
+        self.focusmouse()
 
     @property
     def selmon(self):
@@ -249,6 +256,11 @@ class WM:
     def focusmon(self, direction):
         return NotImplemented
 
+    def focusmouse(self):
+        pointer = self.root.query_pointer()
+        point = pointer.root_x, pointer.root_y
+        self.focuspoint(point)
+
     def focuspoint(self, point):
         for mon in self.monitors:
             if mon.containspoint(point):
@@ -263,14 +275,18 @@ class WM:
         return NotImplemented
 
     def grabkeys(self):
-        for key, mod in self.keys:
-            key = list(self.dpy.keysym_to_keycodes(key))[0][0]
-            self.root.grab_key(key, mod, 1, X.GrabModeAsync, X.GrabModeAsync)
+        self.updatenumlockmask()
+        mods = [0, X.LockMask, self.numlockmask, self.numlockmask | X.LockMask]
+        mode = X.GrabModeAsync
+        for m in mods:
+            for key, mod in self.keys:
+                key = list(self.dpy.keysym_to_keycodes(key))[0][0]
+                self.root.grab_key(key, m | mod, 1, mode,  mode)
 
     def keypress(self, xevent):
-        mod = xevent.state & (X.ShiftMask | X.ControlMask |
-                              X.Mod1Mask | X.Mod2Mask |
-                              X.Mod3Mask | X.Mod4Mask | X.Mod5Mask)
+        mod = (xevent.state & ~(self.numlockmask | X.LockMask) &
+               (X.ShiftMask | X.ControlMask | X.Mod1Mask | X.Mod2Mask |
+               X.Mod3Mask | X.Mod4Mask | X.Mod5Mask))
         keysym = self.dpy.keycode_to_keysym(xevent.detail, 0)
         self.keys.get((keysym, mod), lambda wm: None)(self)
 
@@ -298,7 +314,14 @@ class WM:
         self.focuspoint(point)
 
     def propertynotify(self, xevent):
-        return NotImplemented
+        if xevent.window == self.root and xevent.atom == Xatom.WM_NAME:
+            # future this may be a way to set a yet unimplemented status bar
+            pass
+        client = self.windowtoclient(xevent.window)
+        if xevent.atom == Xatom.WM_NORML_HINTS:
+            client.updatesizehints()
+        if xevent.atom == Xatom.WM_HINTS:
+            client.updatewmhints()
 
     def quit(self):
         self.running = False
@@ -329,12 +352,20 @@ class WM:
             mon.screen.width = self.root.get_geometry().width
             mon.screen.height = self.root.get_geometry().height
 
+    def updatenumlockmask(self):
+        mappings = self.dpy.get_modifier_mapping()
+        numlock = self.dpy.keysym_to_keycode(XK.XK_Num_Lock)
+        for i, l in enumerate(mappings):
+            if numlock in l:
+                self.numlockmask = 1 << i
+
     def unmapnotify(self, xevent):
         client = self.windowtoclient(xevent.window)
         if client:
             client.monitor.removeclient(client)
             xevent.window.unmap()
             self.arrange(client.monitor)
+            self.focusmouse()
 
     def windowtoclient(self, window):
         for client in self.clients():
@@ -461,9 +492,10 @@ def client_to_mon(wm, offset=1):
     client = wm.selmon.selclient
     if client:
         index = wm.monitors.index(wm.selmon)
-        newindex = (index + len(wm.monitors) + offset) % len(wm.monitors)
         wm.selmon.removeclient(client)
-        wm.monitors[newindex].addclient(client)
+        newindex = (index + len(wm.monitors) + offset) % len(wm.monitors)
+        wm.selmon = wm.monitors[newindex]
+        wm.selmon.addclient(client)
         wm.arrange(wm.selmon)
         wm.arrange(oldmon)
 
