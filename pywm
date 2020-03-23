@@ -68,6 +68,10 @@ class Client:
             self.isfullscreen = False
             self.monitor.arrange()
 
+    def name(self):
+        a = self.window.get_wm_class()
+        return a[0] if a else ""
+
     def updatesizehints(self):
         return NotImplemented
 
