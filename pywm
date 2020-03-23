@@ -173,7 +173,7 @@ class WM:
                         break
                 else:
                     self.selmon.createclient(window)
-        self.arrange(self.monitors[0])
+        self.monitors[0].arrange()
         self.focusmouse()
 
     @property
@@ -186,8 +186,9 @@ class WM:
     def selmon(self, value):
         self._selmon = value
 
-    def arrange(self, monitor):
-        self.layouts[monitor.layout](self, monitor)
+    def arrange(self, monitor=None):
+        for mon in (monitor and [monitor]) or self.monitors:
+            self.layouts[mon.layout](self, mon)
 
     def buttonpress(self, xevent):
         return NotImplemented
@@ -254,7 +255,8 @@ class WM:
             client.focus()
 
     def focusmon(self, direction):
-        return NotImplemented
+        index = self.monitors.index(self.selmon) + len(self.monitors)
+        self.selmon = self.monitors[index % len(self.monitors)]
 
     def focusmouse(self):
         pointer = self.root.query_pointer()
@@ -293,9 +295,6 @@ class WM:
     def killclient(self):
         self.selmon.killclient()
 
-    def manage(self, window, windowattrs):
-        return NotImplemented
-
     def maprequest(self, xevent):
         self.selmon.createclient(xevent.window)
         self.arrange(self.selmon)
@@ -304,7 +303,6 @@ class WM:
         return NotImplemented
 
     def motionnotify(self, xevent):
-        return
         if xevent.window != self.root:
             return
         point = self.cursorx, self.cursory = xevent.event_x, xevent.event_y
@@ -505,6 +503,21 @@ def dmenu_run(wm):
     run(f"dmenu_run -m {index}")
 
 
+def flop_mons(wm, direction=1):
+    if direction == 1:
+        save = wm.monitors[-1].screen
+        for mon, other in zip(wm.monitors[1:], wm.monitors):
+            mon.screen = other.screen
+        wm.monitors[0].screen = save
+    else:
+        save = wm.monitors[0].screen
+        for mon, other in zip(wm.monitors, wm.monitors[1:]):
+            mon.screen = other.screen
+        wm.monitors[-1].screen = save
+    wm.arrange()
+    wm.focusmouse()
+
+
 def main():
     global wm
     alt = X.Mod1Mask
@@ -519,6 +532,8 @@ def main():
         (XK.XK_Return, alt): lazy("st"),
         (XK.XK_p, alt): dmenu_run,
         (XK.XK_comma, alt | shift): client_to_mon,
+        (XK.XK_Tab, alt): flop_mons,
+        (XK.XK_Tab, shift | alt): lambda wm: flop_mons(wm, -1),
         },
         [tile])
     wm.run()
