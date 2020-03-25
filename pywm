@@ -2,7 +2,6 @@
 
 import os
 import sys
-import subprocess
 import traceback
 
 from Xlib import X
@@ -11,7 +10,19 @@ from Xlib import Xatom
 from Xlib.display import Display
 from Xlib.protocol.event import ClientMessage
 from Xlib.protocol.event import ConfigureNotify
+from subprocess import DEVNULL as DN, Popen
 from types import SimpleNamespace
+
+
+def pairs(iterable):
+    a = next(iterable, None)
+    for b in iterable:
+        yield a, b
+        a = b
+
+
+def fn(a):
+    return a
 
 
 class Client:
@@ -80,9 +91,10 @@ class Client:
             self.isfullscreen = False
             self.monitor.arrange()
 
-    def name(self):
-        a = self.window.get_wm_class()
-        return a[0] if a else ""
+    def master(self):
+        self.monitor.clients.remove(self)
+        self.monitor.clients.insert(0, self)
+        self.monitor.arrange()
 
 
 class Monitor:
@@ -110,18 +122,18 @@ class Monitor:
         else:
             raise ValueError("Client is not part of this monitor")
 
-    def addclient(self, client):
+    def addclient(self, client, focus=False):
         client.monitor = self
         self.clients.insert(0, client)
         self.selclient = client
+        if focus:
+            client.focus()
 
     def arrange(self):
         self.wm.arrange(self)
 
     def createclient(self, window, focus=True):
-        self.addclient(Client(window, self))
-        if focus:
-            self.selclient.focus()
+        self.addclient(Client(window, self), focus)
 
     def focus(self):
         self.wm.selmon = self
@@ -146,6 +158,7 @@ class Monitor:
 
     def inclayout(self):
         self.layout = (1 + self.layout) % len(self.wm.layouts)
+        self.arrange()
 
 
 class WindowManager:
@@ -154,7 +167,7 @@ class WindowManager:
         self.screen = self.dpy.screen()
         self.root = self.screen.root
         colormap = self.screen.default_colormap
-        self.activecolor = colormap.alloc_named_color("#222222").pixel
+        self.activecolor = colormap.alloc_named_color("#040404").pixel
         self.passivecolor = colormap.alloc_named_color("#000000").pixel
         self.screenwidth = self.root.get_geometry().width
         self.screenheight = self.root.get_geometry().height
@@ -204,12 +217,6 @@ class WindowManager:
     def arrange(self, monitor=None):
         for mon in (monitor and [monitor]) or self.monitors:
             self.layouts[mon.layout](self, mon)
-
-    def buttonpress(self, xevent):
-        return NotImplemented
-
-    def cleanup(self):
-        return NotImplemented
 
     def clientmessage(self, xevent):
         WM_FULL_SCREEN = self.WM_FULL_SCREEN
@@ -288,9 +295,6 @@ class WindowManager:
                 client.focus()
                 return
 
-    def grabbuttons(self):
-        return NotImplemented
-
     def grabkeys(self):
         self.updatenumlockmask()
         mods = [0, X.LockMask, self.numlockmask, self.numlockmask | X.LockMask]
@@ -315,7 +319,13 @@ class WindowManager:
         self.arrange(self.selmon)
 
     def mappingnotify(self, xevent):
-        return NotImplemented
+        self.dpy.refresh_keyboard_mapping(xevent)
+        if xevent.event == X.MappingKeyboard:
+            self.grabkeys()
+
+    def master(self):
+        if self.selmon.selclient:
+            self.selmon.selclient.master()
 
     def motionnotify(self, xevent):
         if xevent.window != self.root:
@@ -327,14 +337,7 @@ class WindowManager:
         self.focuspoint(point)
 
     def propertynotify(self, xevent):
-        if xevent.window == self.root and xevent.atom == Xatom.WM_NAME:
-            # future this may be a way to set a yet unimplemented status bar
-            pass
-        client = self.windowtoclient(xevent.window)
-        if xevent.atom == Xatom.WM_NORML_HINTS:
-            client.updatesizehints()
-        if xevent.atom == Xatom.WM_HINTS:
-            client.updatewmhints()
+        return NotImplemented
 
     def quit(self):
         self.running = False
@@ -359,11 +362,9 @@ class WindowManager:
             if len(self.monitors) == 0:
                 self.monitors.append(Monitor(None, self))
             mon = self.monitors[0]
-            mon.screen = SimpleNamespace()
-            mon.screen.x = 0
-            mon.screen.y = 0
-            mon.screen.width = self.root.get_geometry().width
-            mon.screen.height = self.root.get_geometry().height
+            geom = self.root.get_geometry()
+            width, height = geom.width, geom.height
+            mon.screen = SimpleNamespace(x=0, y=0, width=width, height=height)
 
     def updatenumlockmask(self):
         mappings = self.dpy.get_modifier_mapping()
@@ -394,9 +395,6 @@ class WindowManager:
                 return mon
         return self.selmon
 
-    def error(self, msg):
-        print("pywm:", msg, file=sys.stderr)
-
     def run(self):
         self.running = True
         while self.running:
@@ -418,40 +416,26 @@ class WindowManager:
                 X.UnmapNotify: self.unmapnotify,
             }.get(event.type, lambda a: None)
             if call(event) == NotImplemented:
-                self.error("Handler for " + repr(event) + " not implemented")
+                print(f"pywm: Handler for {event!r} not implemented",
+                      file=sys.stderr, flush=True)
 
 
-def tile(wm, monitor):
-    if len(monitor.clients) == 0:
-        return
-    width = monitor.screen.width
-    height = monitor.screen.height
-    x = monitor.screen.x
-    y = monitor.screen.y
-    if len(monitor.clients) == 0:
-        return
-    if len(monitor.clients) <= monitor.nmaster:
-        for i, client in enumerate(monitor.clients):
-            cwidth = width
-            cheight = height // monitor.nmaster
-            cx = x
-            cy = y + i * cheight
-            client.resize(cx, cy, cwidth, cheight)
-            monitor.clients[0].resize(x, y, width, height)
-            return
+def tile(wm, mon):
+    width = mon.screen.width // (1 + len(mon.clients) > mon.nmaster)
+    height = mon.screen.height
+    x = mon.screen.x
+    y = mon.screen.y
 
-    for i, client in zip(range(monitor.nmaster), monitor.clients):
-        cwidth = width // 2
-        cheight = height // monitor.nmaster
-        cx = x
+    for i, client in zip(range(mon.nmaster), mon.clients):
+        cheight = height // mon.nmaster
         cy = y + i * cheight
-        client.resize(cx, cy, cwidth, cheight)
-    for i, client in enumerate(monitor.clients[monitor.nmaster:]):
-        cwidth = width // 2
-        cheight = height // (len(monitor.clients) - monitor.nmaster)
-        cx = x + width // 2
+        client.resize(x, cy, width, cheight)
+
+    x += width
+    for i, client in enumerate(mon.clients[mon.nmaster:]):
+        cheight = height // (len(mon.clients) - mon.nmaster)
         cy = y + i * cheight
-        client.resize(cx, cy, cwidth, cheight)
+        client.resize(x, cy, width, cheight)
 
 
 def monocole(wm, monitor):
@@ -461,61 +445,11 @@ def monocole(wm, monitor):
         monitor.selclient.resize(x, y, width, height)
 
 
-def single_mon_focus(wm, monitor):
-    if len(wm.monitors) != 2:
-        pass
-    elif wm.monitors[0] == monitor:
-        other = wm.monitors[1]
-        for client in monitor.clients[1:]:
-            monitor.removeclient(client)
-            other.addclient(client)
-        if len(monitor.clients) == 0 and len(other.clients) > 0:
-            monitor.addclient(other.clients[0])
-            other.removeclient(other.clients[0])
-        other.nmaster = 1 if len(other.clients) < 4 else 2
-        other.arrange()
-    else:
-        other = wm.monitors[0]
-        if len(other.clients) == 0 and len(monitor.clients) > 0:
-            other.addclient(monitor.clients[0])
-            monitor.removeclient(other.clients[0])
-        monitor.nmaster = 1 if len(monitor.clients) < 4 else 2
-    wm.focusmouse()
-    tile(wm, monitor)
-
-
-def run(cmd):
-    subprocess.Popen(
-        cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL)
-
-
-def lazy(cmd):
-    return (lambda wm: run(cmd))
-
-
 def focusnext(wm):
-    clients = list(wm.clients())
-    for c1, c2 in zip(clients, clients[1:]):
+    for c1, c2 in pairs(wm.clients()):
         if c1 == wm.selmon.selclient:
             c2.focus()
-            return
-    clients[0].focus()
-
-
-def singlefocusnext(wm):
-    if len(wm.monitors) != 2:
-        return focusnext()
-    wm.selmon = wm.monitors[1]
-    if len(wm.selmon.clients) > 0:
-        wm.selmon.clients[0].focus()
-        client_to_mon(wm, -1)
-    wm.selmon = wm.monitors[0]
-    wm.arrange()
-    client = wm.monitors[1].clients[0]
-    del wm.monitors[1].clients[0]
-    wm.monitors[1].clients.append(client)
-    wm.arrange()
+            c2.monitor.arrange()
 
 
 def client_to_mon(wm, offset=1):
@@ -529,28 +463,19 @@ def client_to_mon(wm, offset=1):
         wm.arrange()
 
 
-def dmenu_run(wm):
-    index = wm.monitors.index(wm.selmon)
-    run(f"dmenu_run -m {index}")
-
-
-def to_dwm(wm):
-    wm.dpy.close()
-    os.execvp("dwm", ["dwm"])
-
-
-def restart(wm):
-    wm.dpy.close()
-    os.execvp("pywm", ["pywm"])
-
-
 def flop_mons(wm):
-    save = wm.monitors[-1].screen
-    for mon, other in zip(wm.monitors[1:], wm.monitors):
-        mon.screen = other.screen
-    wm.monitors[0].screen = save
+    screens = [mon.screen for mon in wm.monitors]
+    for screen, mon in zip(screens[1:] + [screens[0]], wm.monitors):
+        mon.screen = screen
     wm.arrange()
     wm.focusmouse()
+
+
+run = fn(lambda cmd: (lambda wm: Popen(cmd, shell=True, stdin=DN, stdout=DN)))
+lazy = fn(lambda cmd: (lambda wm: run(cmd)))
+to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
+restart = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("pywm", ["pywm"])))
+dmenu_run = fn(lambda wm: run(f"dmenu -m {wm.monitors.index(wm.selmon)}"))
 
 
 def main():
@@ -562,16 +487,20 @@ def main():
         (XK.XK_r, alt): restart,
         (XK.XK_Escape, alt): (lambda wm: wm.killclient()),
         (XK.XK_j, alt): focusnext,
-        (XK.XK_j, shift | alt): singlefocusnext,
         (XK.XK_Return, alt): lazy("st"),
+        (XK.XK_Return, alt | shift): (lambda wm: wm.master()),
         (XK.XK_p, alt): dmenu_run,
         (XK.XK_comma, alt | shift): client_to_mon,
         (XK.XK_Tab, alt): flop_mons,
         (XK.XK_g, alt): lazy("chrome"),
         (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
+        (XK.XK_a, alt): run("dmenu_audio"),
+        (XK.XK_a, alt | shift): run("audio"),
+        (XK.XK_v, alt): run("volume down"),
+        (XK.XK_v, alt | shift): run("volume up"),
     }
-    layouts = [single_mon_focus, tile, monocole]
+    layouts = [tile, monocole]
     wm = WindowManager(keys, layouts)
     wm.run()
 
@@ -582,4 +511,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(str(e), file=sys.stderr, flush=True)
         traceback.print_exc()
-        to_dwm(wm)
+        to_dwm(None)
