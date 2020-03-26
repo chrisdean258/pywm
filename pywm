@@ -7,6 +7,7 @@ import traceback
 from Xlib import X
 from Xlib import XK
 from Xlib import Xatom
+from Xlib import Xcursorfont
 from Xlib.display import Display
 from Xlib.protocol.event import ClientMessage
 from Xlib.protocol.event import ConfigureNotify
@@ -29,28 +30,28 @@ class Client:
     def __init__(self, window, monitor):
         self.window = window
         self.monitor = monitor
+        self.wm = monitor.wm
         self.isfullscreen = False
         mask = X.EnterWindowMask | X.StructureNotifyMask
         self.window.change_attributes(event_mask=mask)
-        self.window.configure(border_width=monitor.wm.border_width)
-        self.window.change_attributes(border_pixel=monitor.wm.passivecolor)
-        self.monitor.wm.dpy.sync()
+        self.window.configure(border_width=self.wm.border_width)
+        self.window.change_attributes(border_pixel=self.wm.passivecolor)
+        self.wm.dpy.sync()
         self.window.map()
 
     def focus(self):
-        for other in self.monitor.wm.clients():
-            other.window.change_attributes(
-                border_pixel=self.monitor.wm.passivecolor)
-        self.window.change_attributes(border_pixel=self.monitor.wm.activecolor)
+        for other in self.wm.clients():
+            other.window.change_attributes(border_pixel=self.wm.passivecolor)
+        self.window.change_attributes(border_pixel=self.wm.activecolor)
         self.monitor.focus()
         self.monitor.selclient = self
         self.window.set_input_focus(X.PointerRoot, X.CurrentTime)
-        atom = self.monitor.wm.NET_ACTIVE_WINDOW
+        atom = self.wm.NET_ACTIVE_WINDOW
         self.window.change_property(atom, Xatom.WINDOW, 32, (self.window.id,))
 
     def kill(self):
-        WM_DELETE_WINDOW = self.monitor.wm.WM_DELETE_WINDOW
-        WM_PROTOCOLS = self.monitor.wm.WM_PROTOCOLS
+        WM_DELETE_WINDOW = self.wm.WM_DELETE_WINDOW
+        WM_PROTOCOLS = self.wm.WM_PROTOCOLS
         if WM_DELETE_WINDOW in self.window.get_wm_protocols():
             data = (32, [WM_DELETE_WINDOW, X.CurrentTime, 0, 0, 0])
             xevent = ClientMessage(
@@ -60,7 +61,7 @@ class Client:
             self.window.destroy()
 
     def resize(self, x, y, w, h):
-        bw = self.monitor.wm.border_width
+        bw = self.wm.border_width
         w -= 2 * bw
         h -= 2 * bw
         self.window.configure(x=x, y=y, width=w, height=h)
@@ -76,8 +77,8 @@ class Client:
             return geom.y <= y < geom.y + geom.width
 
     def fullscreen(self, full=True):
-        NET_WM_STATE = self.monitor.wm.NET_WM_STATE
-        NET_WM_FULLSCREEN = self.monitor.wm.NET_WM_FULLSCREEN
+        NET_WM_STATE = self.wm.NET_WM_STATE
+        NET_WM_FULLSCREEN = self.wm.NET_WM_FULLSCREEN
         if not self.isfullscreen and full:
             self.window.change_property(
                 NET_WM_STATE, Xatom.ATOM, 32, (1, NET_WM_FULLSCREEN))
@@ -167,7 +168,7 @@ class WindowManager:
         self.screen = self.dpy.screen()
         self.root = self.screen.root
         colormap = self.screen.default_colormap
-        self.activecolor = colormap.alloc_named_color("#040404").pixel
+        self.activecolor = colormap.alloc_named_color("#111111").pixel
         self.passivecolor = colormap.alloc_named_color("#000000").pixel
         self.screenwidth = self.root.get_geometry().width
         self.screenheight = self.root.get_geometry().height
@@ -201,7 +202,15 @@ class WindowManager:
                         break
                 else:
                     self.selmon.createclient(window, focus=False)
-        self.monitors[0].arrange()
+
+        font = self.dpy.open_font("cursor")
+        cursor = font.create_glyph_cursor(
+            font,
+            Xcursorfont.left_ptr, Xcursorfont.left_ptr + 1,
+            (65535, 65535, 65535), (0, 0, 0))
+        self.root.change_attributes(cursor=cursor)
+        self.dpy.sync()
+        self.arrange()
         self.focusmouse()
 
     @property
@@ -301,7 +310,7 @@ class WindowManager:
         mode = X.GrabModeAsync
         for m in mods:
             for key, mod in self.keys:
-                key = list(self.dpy.keysym_to_keycodes(key))[0][0]
+                key = self.dpy.keysym_to_keycode(key)
                 self.root.grab_key(key, m | mod, 1, mode,  mode)
 
     def keypress(self, xevent):
@@ -309,7 +318,7 @@ class WindowManager:
                (X.ShiftMask | X.ControlMask | X.Mod1Mask | X.Mod2Mask |
                X.Mod3Mask | X.Mod4Mask | X.Mod5Mask))
         keysym = self.dpy.keycode_to_keysym(xevent.detail, 0)
-        self.keys.get((keysym, mod), lambda wm: None)(self)
+        self.keys.get((keysym, mod), fn)(self)
 
     def killclient(self):
         self.selmon.killclient()
@@ -320,8 +329,7 @@ class WindowManager:
 
     def mappingnotify(self, xevent):
         self.dpy.refresh_keyboard_mapping(xevent)
-        if xevent.event == X.MappingKeyboard:
-            self.grabkeys()
+        self.grabkeys()
 
     def master(self):
         if self.selmon.selclient:
@@ -365,6 +373,10 @@ class WindowManager:
             geom = self.root.get_geometry()
             width, height = geom.width, geom.height
             mon.screen = SimpleNamespace(x=0, y=0, width=width, height=height)
+        if self.monitors[0].screen.x > 1920:
+            os.environ["GDK_SCALE"] = "2"
+        else:
+            os.environ["GDK_SCALE"] = "1"
 
     def updatenumlockmask(self):
         mappings = self.dpy.get_modifier_mapping()
@@ -400,7 +412,6 @@ class WindowManager:
         while self.running:
             event = self.dpy.next_event()
             call = {
-                X.ButtonPress: self.buttonpress,
                 X.ClientMessage: self.clientmessage,
                 X.ConfigureRequest: self.configurerequest,
                 X.ConfigureNotify: self.configurenotify,
@@ -421,7 +432,7 @@ class WindowManager:
 
 
 def tile(wm, mon):
-    width = mon.screen.width // (1 + len(mon.clients) > mon.nmaster)
+    width = mon.screen.width // (1 + (len(mon.clients) > mon.nmaster))
     height = mon.screen.height
     x = mon.screen.x
     y = mon.screen.y
@@ -446,10 +457,13 @@ def monocole(wm, monitor):
 
 
 def focusnext(wm):
-    for c1, c2 in pairs(wm.clients()):
+    clients = list(wm.clients())
+    for c1, c2 in pairs(clients):
         if c1 == wm.selmon.selclient:
             c2.focus()
-            c2.monitor.arrange()
+            return c2.monitor.arrange()
+    if len(clients) > 0:
+        clients[0].focus()
 
 
 def client_to_mon(wm, offset=1):
@@ -471,11 +485,11 @@ def flop_mons(wm):
     wm.focusmouse()
 
 
-run = fn(lambda cmd: (lambda wm: Popen(cmd, shell=True, stdin=DN, stdout=DN)))
+run = fn(lambda cmd: Popen(cmd, shell=True, stdin=DN, stdout=DN))
 lazy = fn(lambda cmd: (lambda wm: run(cmd)))
 to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
 restart = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("pywm", ["pywm"])))
-dmenu_run = fn(lambda wm: run(f"dmenu -m {wm.monitors.index(wm.selmon)}"))
+dmenu_run = fn(lambda wm: run(f"dmenu_run -m {wm.monitors.index(wm.selmon)}"))
 
 
 def main():
@@ -484,6 +498,7 @@ def main():
     shift = X.ShiftMask
     keys = {
         (XK.XK_q, alt): to_dwm,
+        (XK.XK_q, shift | alt): (lambda wm: wm.quit()),
         (XK.XK_r, alt): restart,
         (XK.XK_Escape, alt): (lambda wm: wm.killclient()),
         (XK.XK_j, alt): focusnext,
@@ -492,13 +507,13 @@ def main():
         (XK.XK_p, alt): dmenu_run,
         (XK.XK_comma, alt | shift): client_to_mon,
         (XK.XK_Tab, alt): flop_mons,
-        (XK.XK_g, alt): lazy("chrome"),
+        (XK.XK_g, alt): lazy("firefox"),
         (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
-        (XK.XK_a, alt): run("dmenu_audio"),
-        (XK.XK_a, alt | shift): run("audio"),
-        (XK.XK_v, alt): run("volume down"),
-        (XK.XK_v, alt | shift): run("volume up"),
+        (XK.XK_a, alt): lazy("dmenu_audio"),
+        (XK.XK_a, alt | shift): lazy("audio"),
+        (XK.XK_v, alt): lazy("volume down"),
+        (XK.XK_v, alt | shift): lazy("volume up"),
     }
     layouts = [tile, monocole]
     wm = WindowManager(keys, layouts)
@@ -509,6 +524,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(str(e), file=sys.stderr, flush=True)
         traceback.print_exc()
+        print(str(e), file=sys.stderr, flush=True)
         to_dwm(None)
