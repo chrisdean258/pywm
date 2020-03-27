@@ -506,7 +506,7 @@ def main():
         (XK.XK_g, alt): lazy("firefox"),
         (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
-        (XK.XK_a, alt): lazy("discord"),
+        (XK.XK_d, alt): lazy("discord"),
         (XK.XK_a, alt): lazy("dmenu_audio"),
         (XK.XK_a, alt | shift): lazy("audio"),
         (XK.XK_v, alt): lazy("volume down"),
