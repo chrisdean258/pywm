@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 
 def pairs(iterable):
+    iterable = iter(iterable)
     a = next(iterable, None)
     for b in iterable:
         yield a, b
@@ -43,6 +44,7 @@ class Client:
         for other in self.wm.clients():
             other.window.change_attributes(border_pixel=self.wm.passivecolor)
         self.window.change_attributes(border_pixel=self.wm.activecolor)
+        self.window.configure(stack_mode=X.Above)
         self.monitor.focus()
         self.monitor.selclient = self
         self.window.set_input_focus(X.PointerRoot, X.CurrentTime)
@@ -205,11 +207,9 @@ class WindowManager:
 
         font = self.dpy.open_font("cursor")
         cursor = font.create_glyph_cursor(
-            font,
-            Xcursorfont.left_ptr, Xcursorfont.left_ptr + 1,
+            font, Xcursorfont.left_ptr, Xcursorfont.left_ptr + 1,
             (65535, 65535, 65535), (0, 0, 0))
         self.root.change_attributes(cursor=cursor)
-        self.dpy.sync()
         self.arrange()
         self.focusmouse()
 
@@ -248,7 +248,9 @@ class WindowManager:
             return NotImplemented
 
     def configurerequest(self, xevent):
-        return NotImplemented
+        client = self.windowtoclient(xevent.window)
+        if client:
+            client.resize(xevent.x, xevent.y, xevent.width, xevent.height)
 
     def destroynotify(self, xevent):
         client = self.windowtoclient(xevent.window)
@@ -364,8 +366,6 @@ class WindowManager:
                 self.monitors = self.monitors[:len(screens)]
             for mon, screen in zip(self.monitors, screens):
                 mon.screen = screen
-                if mon.layout is None:
-                    mon.setlayout(self.layouts[0])
         else:
             if len(self.monitors) == 0:
                 self.monitors.append(Monitor(None, self))
@@ -373,10 +373,6 @@ class WindowManager:
             geom = self.root.get_geometry()
             width, height = geom.width, geom.height
             mon.screen = SimpleNamespace(x=0, y=0, width=width, height=height)
-        if self.monitors[0].screen.x > 1920:
-            os.environ["GDK_SCALE"] = "2"
-        else:
-            os.environ["GDK_SCALE"] = "1"
 
     def updatenumlockmask(self):
         mappings = self.dpy.get_modifier_mapping()
@@ -510,6 +506,7 @@ def main():
         (XK.XK_g, alt): lazy("firefox"),
         (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
+        (XK.XK_a, alt): lazy("discord"),
         (XK.XK_a, alt): lazy("dmenu_audio"),
         (XK.XK_a, alt | shift): lazy("audio"),
         (XK.XK_v, alt): lazy("volume down"),
