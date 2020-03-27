@@ -326,8 +326,10 @@ class WindowManager:
         self.selmon.killclient()
 
     def maprequest(self, xevent):
-        self.selmon.createclient(xevent.window)
-        self.arrange(self.selmon)
+        attrs = xevent.window.get_attributes()
+        if attrs.map_state == X.IsViewable:
+            self.selmon.createclient(xevent.window)
+            self.arrange(self.selmon)
 
     def mappingnotify(self, xevent):
         self.dpy.refresh_keyboard_mapping(xevent)
