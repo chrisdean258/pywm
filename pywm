@@ -50,10 +50,12 @@ class Client:
         self.window.set_input_focus(X.PointerRoot, X.CurrentTime)
         atom = self.wm.NET_ACTIVE_WINDOW
         self.window.change_property(atom, Xatom.WINDOW, 32, (self.window.id,))
+        self.wm.dpy.sync()
 
     def kill(self):
         WM_DELETE_WINDOW = self.wm.WM_DELETE_WINDOW
         WM_PROTOCOLS = self.wm.WM_PROTOCOLS
+        self.wm.dpy.grab_server()
         if WM_DELETE_WINDOW in self.window.get_wm_protocols():
             data = (32, [WM_DELETE_WINDOW, X.CurrentTime, 0, 0, 0])
             xevent = ClientMessage(
@@ -61,16 +63,35 @@ class Client:
             self.window.send_event(xevent)
         else:
             self.window.destroy()
+        self.wm.dpy.sync()
+        self.wm.dpy.ungrab_server()
 
     def resize(self, x, y, w, h):
         bw = self.wm.border_width
         w -= 2 * bw
         h -= 2 * bw
+        hints = self.window.get_wm_normal_hints()
+        w = min(hints.max_width or w, w)
+        h = min(hints.max_height or h, h)
+
+        if hints.max_aspect.denum != 0:
+            if w / h > hints.max_aspect.num / hints.max_aspect.denum:
+                w = int(hints.max_aspect.num / hints.max_aspect.denum * h)
+        if hints.min_aspect.denum != 0:
+            if w / h < hints.max_aspect.num / hints.max_aspect.denum:
+                h = int(hints.max_aspect.denum / hints.max_aspect.num * w)
+
+        wa = hints.base_width % (hints.width_inc or 1)
+        ha = hints.base_height % (hints.height_inc or 1)
+        w = w - (w % (hints.width_inc or 1)) + wa
+        h = h - (h % (hints.height_inc or 1)) + ha
+
         self.window.configure(x=x, y=y, width=w, height=h)
         xevent = ConfigureNotify(
             event=self.window, window=self.window, above_sibling=False,
             x=x, y=y, width=w, height=h, border_width=bw, override=False)
         self.window.send_event(xevent)
+        self.wm.dpy.sync()
 
     def containspoint(self, point):
         x, y = point
@@ -93,6 +114,7 @@ class Client:
             self.window.change_property(NET_WM_STATE, Xatom.ATOM, 32, (1, 1))
             self.isfullscreen = False
             self.monitor.arrange()
+        self.wm.dpy.sync()
 
     def master(self):
         self.monitor.clients.remove(self)
@@ -226,6 +248,7 @@ class WindowManager:
     def arrange(self, monitor=None):
         for mon in (monitor and [monitor]) or self.monitors:
             self.layouts[mon.layout](self, mon)
+        self.dpy.sync()
 
     def clientmessage(self, xevent):
         WM_FULL_SCREEN = self.WM_FULL_SCREEN
@@ -251,6 +274,7 @@ class WindowManager:
         client = self.windowtoclient(xevent.window)
         if client:
             client.resize(xevent.x, xevent.y, xevent.width, xevent.height)
+            client.monitor.arrange()
 
     def destroynotify(self, xevent):
         client = self.windowtoclient(xevent.window)
@@ -326,10 +350,10 @@ class WindowManager:
         self.selmon.killclient()
 
     def maprequest(self, xevent):
-        attrs = xevent.window.get_attributes()
-        if attrs.map_state == X.IsViewable:
-            self.selmon.createclient(xevent.window)
-            self.arrange(self.selmon)
+        # attrs = xevent.window.get_attributes()
+        # if attrs.map_state == X.IsViewable:
+        self.selmon.createclient(xevent.window)
+        self.arrange(self.selmon)
 
     def mappingnotify(self, xevent):
         self.dpy.refresh_keyboard_mapping(xevent)
@@ -520,9 +544,10 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        traceback.print_exc()
-        print(str(e), file=sys.stderr, flush=True)
-        to_dwm(None)
+    while True:
+        try:
+            main()
+        except Exception as e:
+            traceback.print_exc()
+            print(str(e), file=sys.stderr, flush=True)
+            restart(None)
