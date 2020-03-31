@@ -29,14 +29,13 @@ def fn(a):
 
 class Client:
     def __init__(self, window, monitor):
-        print("hello", flush=True)
         self.window = window
         self.monitor = monitor
         self.wm = monitor.wm
         self.isfullscreen = False
 
         self.parent = self.wm.root.create_window(
-            0, 0, 4000, 4000, 0, 0)
+            0, 0, 100, 100, 0, 0)
         self.parentgc = self.parent.create_gc(
             foreground=self.wm.othercolor,
             background=self.wm.othercolor,
@@ -51,6 +50,7 @@ class Client:
         self.window.reparent(self.parent, 0, 0)
         self.window.map()
         self.parent.map()
+        self.window.configure(stack_mode=X.Above)
 
     def focus(self):
         for other in self.wm.clients():
@@ -76,26 +76,28 @@ class Client:
             self.window.send_event(xevent)
         else:
             self.window.destroy()
-        self.parent.unmap()
-        self.parent.destroy()
+            self.parent.unmap()
+            self.parent.destroy()
         self.wm.dpy.sync()
         self.wm.dpy.ungrab_server()
 
     def resize(self, x, y, w, h):
         ow, oh = w, h
-        self.parent.configure(x=x, y=y, w=w, h=h)
-        # self.parentgc.free()
-        # self.wm.dpy.flush()
-        # self.wm.dpy.sync()
-        # self.parentgc = self.parent.create_gc(
-        # foreground=self.wm.othercolor,
-        # background=self.wm.othercolor)
-        # self.parentgc.change(
-        # foreground=self.wm.othercolor,
-        # background=self.wm.othercolor)
+        bw = self.wm.border_width
+        self.parent.configure(x=x, y=y, w=w, h=h, stack_mode=X.Above)
+        xevent = ConfigureNotify(
+            event=self.parent, window=self.window, above_sibling=True,
+            x=x, y=y, width=w, height=h, border_width=bw, override=False)
+        self.parent.send_event(xevent)
+        self.wm.dpy.flush()
+        self.wm.dpy.sync()
+        self.parentgc.free()
+        self.wm.dpy.sync()
+        self.parentgc = self.parent.create_gc(
+            foreground=self.wm.othercolor,
+            background=self.wm.othercolor)
         self.parent.fill_rectangle(self.parentgc, x, y, w, h)
         self.wm.dpy.flush()
-        bw = self.wm.border_width
         w -= 2 * bw
         h -= 2 * bw
         hints = self.window.get_wm_normal_hints()
@@ -117,11 +119,7 @@ class Client:
         x = (ow - 2*bw - w) // 2
         y = (oh - 2*bw - h) // 2
 
-        self.window.configure(x=x, y=y, width=w, height=h)
-        xevent = ConfigureNotify(
-            event=self.window, window=self.window, above_sibling=False,
-            x=x, y=y, width=w, height=h, border_width=bw, override=False)
-        self.window.send_event(xevent)
+        self.window.configure(x=x, y=y, width=w, height=h, stack_mode=X.Above)
         self.wm.dpy.sync()
 
     def containspoint(self, point):
@@ -299,8 +297,11 @@ class WindowManager:
             yield from mon.clients
 
     def configurenotify(self, xevent):
-        if xevent.window == self.root:
-            return NotImplemented
+        return
+        client = self.windowtoclient(xevent.window)
+        if client:
+            client.resize(xevent.x, xevent.y, xevent.width, xevent.height)
+            client.monitor.arrange()
 
     def configurerequest(self, xevent):
         client = self.windowtoclient(xevent.window)
@@ -443,7 +444,8 @@ class WindowManager:
         client = self.windowtoclient(xevent.window)
         if client:
             client.monitor.removeclient(client)
-            xevent.window.unmap()
+            client.parent.unmap()
+            client.window.unmap()
             self.arrange(client.monitor)
             self.focusmouse()
 
@@ -480,6 +482,7 @@ class WindowManager:
                 X.PropertyNotify: self.propertynotify,
                 X.UnmapNotify: self.unmapnotify,
             }.get(event.type, lambda a: None)
+            # print(repr(event)[:190], flush=True)
             if call(event) == NotImplemented:
                 print(f"pywm: Handler for {event!r} not implemented",
                       file=sys.stderr, flush=True)
