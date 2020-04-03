@@ -316,12 +316,13 @@ class WindowManager:
 
     def grabkeys(self):
         self.updatenumlockmask()
+        self.root.ungrab_key(X.AnyKey, X.AnyModifier)
         mods = [0, X.LockMask, self.numlockmask, self.numlockmask | X.LockMask]
         mode = X.GrabModeAsync
         for m in mods:
             for key, mod in self.keys:
                 key = self.dpy.keysym_to_keycode(key)
-                self.root.grab_key(key, m | mod, 1, mode,  mode)
+                self.root.grab_key(key, m | mod, 1, mode, mode)
 
     def keypress(self, xevent):
         mod = (xevent.state & ~(self.numlockmask | X.LockMask) &
