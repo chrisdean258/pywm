@@ -33,6 +33,7 @@ class Client:
         self.monitor = monitor
         self.wm = monitor.wm
         self.isfullscreen = False
+        self.visible = True
         mask = X.EnterWindowMask | X.StructureNotifyMask
         self.window.change_attributes(event_mask=mask)
         self.window.configure(border_width=self.wm.border_width)
@@ -105,12 +106,30 @@ class Client:
         self.monitor.clients.insert(0, self)
         self.monitor.arrange()
 
+    def hide(self):
+        if self.visible:
+            self.visible = False
+            self.window.unmap()
+            self.monitor.arrange()
+
+    def show(self):
+        if not self.visible:
+            self.visible = True
+            self.window.map()
+            self.monitor.arrange()
+
+    def showhide(self):
+        if self.visible:
+            self.hide()
+        else:
+            self.show()
+
 
 class Monitor:
     def __init__(self, screen, wm):
         self.screen = screen
         self.wm = wm
-        self.clients = []
+        self._clients = []
         self._selclient = None
         self.layout = 0
         self.nmaster = 1
@@ -131,9 +150,13 @@ class Monitor:
         else:
             raise ValueError("Client is not part of this monitor")
 
+    @property
+    def clients(self):
+        return [c for c in self._clients if c.visible]
+
     def addclient(self, client, focus=False):
         client.monitor = self
-        self.clients.insert(0, client)
+        self._clients.insert(0, client)
         self.selclient = client
         if focus:
             client.focus()
@@ -148,8 +171,8 @@ class Monitor:
         self.wm.selmon = self
 
     def removeclient(self, client):
-        if client in self.clients:
-            self.clients.remove(client)
+        if client in self._clients:
+            self._clients.remove(client)
 
     def setlayout(self, layout):
         self.layout = layout
@@ -181,6 +204,7 @@ class WindowManager:
         self.screenwidth = self.root.get_geometry().width
         self.screenheight = self.root.get_geometry().height
         self.monitors = []
+        self.hidden = []
         self._selmon = None
         self.numlockmask = 0
         self.border_width = 1
@@ -323,6 +347,19 @@ class WindowManager:
             for key, mod in self.keys:
                 key = self.dpy.keysym_to_keycode(key)
                 self.root.grab_key(key, m | mod, 1, mode, mode)
+
+    def hideclient(self):
+        client = self.selmon.selclient
+        if client:
+            self.hidden.append(client)
+            client.hide()
+            self.focusmouse()
+
+    def showclient(self):
+        if len(self.hidden) > 0:
+            client = self.hidden.pop()
+            client.show()
+            client.focus()
 
     def keypress(self, xevent):
         mod = (xevent.state & ~(self.numlockmask | X.LockMask) &
@@ -504,6 +541,8 @@ def main():
     alt = X.Mod1Mask
     shift = X.ShiftMask
     keys = {
+        (XK.XK_m, alt): (lambda wm: wm.hideclient()),
+        (XK.XK_m, alt | shift): (lambda wm: wm.showclient()),
         (XK.XK_q, alt): to_dwm,
         (XK.XK_q, shift | alt): (lambda wm: wm.quit()),
         (XK.XK_r, alt): restart,
@@ -515,7 +554,7 @@ def main():
         (XK.XK_comma, alt | shift): client_to_mon,
         (XK.XK_Tab, alt): flop_mons,
         (XK.XK_g, alt): lazy("firefox"),
-        (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
+        # (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_space, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
         (XK.XK_d, alt): lazy("discord"),
