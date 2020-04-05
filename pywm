@@ -361,6 +361,12 @@ class WindowManager:
             client.show()
             client.focus()
 
+    def showhideclient(self):
+        if len(self.hidden) > 0:
+            self.showclient()
+        else:
+            self.hideclient()
+
     def keypress(self, xevent):
         mod = (xevent.state & ~(self.numlockmask | X.LockMask) &
                (X.ShiftMask | X.ControlMask | X.Mod1Mask | X.Mod2Mask |
@@ -542,7 +548,7 @@ def main():
     shift = X.ShiftMask
     keys = {
         (XK.XK_m, alt): (lambda wm: wm.hideclient()),
-        (XK.XK_m, alt | shift): (lambda wm: wm.showclient()),
+        (XK.XK_m, alt | shift): (lambda wm: wm.showhideclient()),
         (XK.XK_q, alt): to_dwm,
         (XK.XK_q, shift | alt): (lambda wm: wm.quit()),
         (XK.XK_r, alt): restart,
@@ -554,7 +560,6 @@ def main():
         (XK.XK_comma, alt | shift): client_to_mon,
         (XK.XK_Tab, alt): flop_mons,
         (XK.XK_g, alt): lazy("firefox"),
-        # (XK.XK_m, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_space, alt): (lambda wm: wm.selmon.inclayout()),
         (XK.XK_Tab, alt): flop_mons,
         (XK.XK_d, alt): lazy("discord"),
