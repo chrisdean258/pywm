@@ -574,10 +574,9 @@ def main():
 
 
 if __name__ == "__main__":
-    while True:
-        try:
-            main()
-        except Exception as e:
-            traceback.print_exc()
-            print(str(e), file=sys.stderr, flush=True)
-            restart(None)
+    try:
+        main()
+    except Exception as e:
+        traceback.print_exc()
+        print(str(e), file=sys.stderr, flush=True)
+        restart(None)
