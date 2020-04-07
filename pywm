@@ -106,23 +106,22 @@ class Client:
         self.monitor.clients.insert(0, self)
         self.monitor.arrange()
 
-    def hide(self):
+    def hide(self, arrange=True):
         if self.visible:
             self.visible = False
             self.window.unmap()
-            self.monitor.arrange()
+            if arrange:
+                self.monitor.arrange()
 
-    def show(self):
+    def show(self, arrange=True):
         if not self.visible:
             self.visible = True
             self.window.map()
-            self.monitor.arrange()
+            if arrange:
+                self.monitor.arrange()
 
-    def showhide(self):
-        if self.visible:
-            self.hide()
-        else:
-            self.show()
+    def showhide(self, arrange=True):
+        return self.hide(arrange) if self.visible else self.show(arrange)
 
 
 class Monitor:
