@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import signal
 import sys
 import traceback
 
@@ -13,14 +14,6 @@ from Xlib.protocol.event import ClientMessage
 from Xlib.protocol.event import ConfigureNotify
 from subprocess import DEVNULL as DN, Popen
 from types import SimpleNamespace
-
-
-def pairs(iterable):
-    iterable = iter(iterable)
-    a = next(iterable, None)
-    for b in iterable:
-        yield a, b
-        a = b
 
 
 def fn(a):
@@ -317,11 +310,10 @@ class WindowManager:
             client.focus()
 
     def focusin(self, xevent):
-        if xevent.window == self.selmon.selclient.window:
-            return
-        client = self.windowtoclient(xevent.window)
-        if client:
-            client.focus()
+        if xevent.window != self.selmon.selclient.window:
+            client = self.windowtoclient(xevent.window)
+            if client:
+                client.focus()
 
     def focusmon(self, direction):
         index = self.monitors.index(self.selmon) + len(self.monitors)
@@ -339,8 +331,7 @@ class WindowManager:
                 break
         for client in self.clients():
             if client.containspoint(point):
-                client.focus()
-                return
+                return client.focus()
 
     def grabkeys(self):
         self.updatenumlockmask()
@@ -369,8 +360,6 @@ class WindowManager:
         self.selmon.killclient()
 
     def maprequest(self, xevent):
-        # attrs = xevent.window.get_attributes()
-        # if attrs.map_state == X.IsViewable:
         self.selmon.createclient(xevent.window)
         self.arrange(self.selmon)
 
@@ -467,12 +456,6 @@ class WindowManager:
                 X.UnmapNotify: self.unmapnotify,
             }.get(event.type, lambda a: None)
 
-            # if event.type in [X.ClientMessage, X.ConfigureRequest,
-            # X.ConfigureNotify, X.DestroyNotify, X.EnterNotify, X.Expose,
-            # X.FocusIn, X.KeyPress, X.MappingNotify, X.MapRequest,
-            # X.PropertyNotify, X.UnmapNotify]:
-            # print(event.type, len(list(self.clients())), flush=True)
-
             if call(event) == NotImplemented:
                 print(f"pywm: Handler for {event!r} not implemented",
                       file=sys.stderr, flush=True)
@@ -506,7 +489,7 @@ def monocole(wm, monitor):
 
 def focusnext(wm):
     clients = list(wm.clients())
-    for c1, c2 in pairs(clients):
+    for c1, c2 in zip(clients, clients[:1]):
         if c1 == wm.selmon.selclient:
             c2.focus()
             return c2.monitor.arrange()
@@ -545,7 +528,16 @@ def toggleall(wm):
     wm.arrange()
 
 
-run = fn(lambda cmd: Popen(cmd, shell=True, stdin=DN, stdout=DN))
+procs = []
+
+
+def spawn(cmd):
+    global procs
+    procs.append(Popen(cmd, shell=True, stdin=DN, stdout=DN))
+    [p.wait() for p in procs if p.poll() is not None]
+
+
+run = fn(lambda cmd: spawn(cmd))
 lazy = fn(lambda cmd: (lambda wm: run(cmd)))
 to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
 restart = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("pywm", ["pywm"])))
@@ -553,6 +545,9 @@ dmenu_run = fn(lambda wm: run(f"dmenu_run -m {wm.monitors.index(wm.selmon)}"))
 
 
 def main():
+    def handleSIGCHLD():
+        os.waitpid(-1, os.WNOHANG)
+    signal.signal(signal.SIGCHLD, os.WNOHANG)
     global wm
     alt = X.Mod1Mask
     shift = X.ShiftMask
