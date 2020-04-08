@@ -539,6 +539,12 @@ def showall(wm):
     wm.arrange()
 
 
+def toggleall(wm):
+    for client in wm.clients():
+        client.showhide(False)
+    wm.arrange()
+
+
 run = fn(lambda cmd: Popen(cmd, shell=True, stdin=DN, stdout=DN))
 lazy = fn(lambda cmd: (lambda wm: run(cmd)))
 to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
@@ -562,10 +568,10 @@ def main():
         (XK.XK_Return, alt | shift): (lambda wm: wm.master()),
         (XK.XK_p, alt): dmenu_run,
         (XK.XK_comma, alt | shift): client_to_mon,
-        (XK.XK_Tab, alt): flop_mons,
+        (XK.XK_Tab, alt): toggleall,
+        (XK.XK_Tab, alt | shift): flop_mons,
         (XK.XK_g, alt): lazy("firefox"),
         (XK.XK_space, alt): (lambda wm: wm.selmon.inclayout()),
-        (XK.XK_Tab, alt): flop_mons,
         (XK.XK_d, alt): lazy("discord"),
         (XK.XK_a, alt): lazy("dmenu_audio"),
         (XK.XK_a, alt | shift): lazy("audio"),
