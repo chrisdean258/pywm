@@ -80,6 +80,8 @@ class Client:
 
     def containspoint(self, point):
         x, y = point
+        if not self.visible:
+            return False
         geom = self.window.get_geometry()
         if geom.x <= x < geom.x + geom.width:
             return geom.y <= y < geom.y + geom.width
@@ -128,7 +130,7 @@ class Monitor:
     def __init__(self, screen, wm):
         self.screen = screen
         self.wm = wm
-        self._clients = []
+        self.clients = []
         self._selclient = None
         self.layout = 0
         self.nmaster = 1
@@ -150,12 +152,12 @@ class Monitor:
             raise ValueError("Client is not part of this monitor")
 
     @property
-    def clients(self):
-        return [c for c in self._clients if c.visible]
+    def visible(self):
+        return [c for c in self.clients if c.visible]
 
     def addclient(self, client, focus=False):
         client.monitor = self
-        self._clients.insert(0, client)
+        self.clients.insert(0, client)
         self.selclient = client
         if focus:
             client.focus()
@@ -170,8 +172,8 @@ class Monitor:
         self.wm.selmon = self
 
     def removeclient(self, client):
-        if client in self._clients:
-            self._clients.remove(client)
+        if client in self.clients:
+            self.clients.remove(client)
 
     def setlayout(self, layout):
         self.layout = layout
@@ -203,7 +205,6 @@ class WindowManager:
         self.screenwidth = self.root.get_geometry().width
         self.screenheight = self.root.get_geometry().height
         self.monitors = []
-        self.hidden = []
         self._selmon = None
         self.numlockmask = 0
         self.border_width = 1
@@ -272,6 +273,10 @@ class WindowManager:
     def clients(self):
         for mon in self.monitors:
             yield from mon.clients
+
+    def visible(self):
+        for mon in self.monitors:
+            yield from mon.visible
 
     def configurenotify(self, xevent):
         if xevent.window == self.root:
@@ -350,21 +355,8 @@ class WindowManager:
     def hideclient(self):
         client = self.selmon.selclient
         if client:
-            self.hidden.append(client)
             client.hide()
             self.focusmouse()
-
-    def showclient(self):
-        if len(self.hidden) > 0:
-            client = self.hidden.pop()
-            client.show()
-            client.focus()
-
-    def showhideclient(self):
-        if len(self.hidden) > 0:
-            self.showclient()
-        else:
-            self.hideclient()
 
     def keypress(self, xevent):
         mod = (xevent.state & ~(self.numlockmask | X.LockMask) &
@@ -436,8 +428,7 @@ class WindowManager:
 
     def unmapnotify(self, xevent):
         client = self.windowtoclient(xevent.window)
-        if client:
-            client.monitor.removeclient(client)
+        if client and not xevent.send_event:
             xevent.window.unmap()
             self.arrange(client.monitor)
             self.focusmouse()
@@ -475,25 +466,33 @@ class WindowManager:
                 X.PropertyNotify: self.propertynotify,
                 X.UnmapNotify: self.unmapnotify,
             }.get(event.type, lambda a: None)
+
+            # if event.type in [X.ClientMessage, X.ConfigureRequest,
+            # X.ConfigureNotify, X.DestroyNotify, X.EnterNotify, X.Expose,
+            # X.FocusIn, X.KeyPress, X.MappingNotify, X.MapRequest,
+            # X.PropertyNotify, X.UnmapNotify]:
+            # print(event.type, len(list(self.clients())), flush=True)
+
             if call(event) == NotImplemented:
                 print(f"pywm: Handler for {event!r} not implemented",
                       file=sys.stderr, flush=True)
 
 
 def tile(wm, mon):
-    width = mon.screen.width // (1 + (len(mon.clients) > mon.nmaster))
+    clients = list(mon.visible)
+    width = mon.screen.width // (1 + (len(clients) > mon.nmaster))
     height = mon.screen.height
     x = mon.screen.x
     y = mon.screen.y
 
-    for i, client in zip(range(mon.nmaster), mon.clients):
+    for i, client in enumerate(clients[:mon.nmaster]):
         cheight = height // mon.nmaster
         cy = y + i * cheight
         client.resize(x, cy, width, cheight)
 
     x += width
-    for i, client in enumerate(mon.clients[mon.nmaster:]):
-        cheight = height // (len(mon.clients) - mon.nmaster)
+    for i, client in enumerate(clients[mon.nmaster:]):
+        cheight = height // (len(clients) - mon.nmaster)
         cy = y + i * cheight
         client.resize(x, cy, width, cheight)
 
@@ -534,6 +533,12 @@ def flop_mons(wm):
     wm.focusmouse()
 
 
+def showall(wm):
+    for client in wm.clients():
+        client.show(False)
+    wm.arrange()
+
+
 run = fn(lambda cmd: Popen(cmd, shell=True, stdin=DN, stdout=DN))
 lazy = fn(lambda cmd: (lambda wm: run(cmd)))
 to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
@@ -547,7 +552,7 @@ def main():
     shift = X.ShiftMask
     keys = {
         (XK.XK_m, alt): (lambda wm: wm.hideclient()),
-        (XK.XK_m, alt | shift): (lambda wm: wm.showhideclient()),
+        (XK.XK_m, alt | shift): showall,
         (XK.XK_q, alt): to_dwm,
         (XK.XK_q, shift | alt): (lambda wm: wm.quit()),
         (XK.XK_r, alt): restart,
