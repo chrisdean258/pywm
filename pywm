@@ -220,13 +220,11 @@ class WindowManager:
             attrs = window.get_attributes()
             if attrs.map_state == X.IsViewable:
                 geom = window.get_geometry()
-                point = geom.x, geom.y
+                cmon = self.selmon
                 for mon in self.monitors:
-                    if mon.containspoint(point):
-                        mon.createclient(window, focus=False)
-                        break
-                else:
-                    self.selmon.createclient(window, focus=False)
+                    if mon.containspoint((geom.x, geom.y)):
+                        cmon = mon
+                cmon.createclient(window, focus=False)
 
         font = self.dpy.open_font("cursor")
         cursor = font.create_glyph_cursor(
@@ -255,13 +253,12 @@ class WindowManager:
         WM_FULL_SCREEN = self.WM_FULL_SCREEN
         NET_WM_STATE = self.NET_WM_STATE
         client = self.windowtoclient(xevent.window)
-        if client is None:
-            return
-        size, data = xevent.data
-        if xevent.client_type == NET_WM_STATE:
-            if data[1] == WM_FULL_SCREEN or data[2] == WM_FULL_SCREEN:
-                gofull = data[0] == 2 and not client.isfullscreen
-                client.fullscreen(data[0] == 1 or gofull)
+        if client is not None:
+            size, data = xevent.data
+            if xevent.client_type == NET_WM_STATE:
+                if data[1] == WM_FULL_SCREEN or data[2] == WM_FULL_SCREEN:
+                    gofull = data[0] == 2 and not client.isfullscreen
+                    client.fullscreen(data[0] == 1 or gofull)
 
     def clients(self):
         for mon in self.monitors:
@@ -328,7 +325,6 @@ class WindowManager:
         for mon in self.monitors:
             if mon.containspoint(point):
                 self.selmon = mon
-                break
         for client in self.clients():
             if client.containspoint(point):
                 return client.focus()
@@ -372,13 +368,11 @@ class WindowManager:
             self.selmon.selclient.master()
 
     def motionnotify(self, xevent):
-        if xevent.window != self.root:
-            return
-        point = self.cursorx, self.cursory = xevent.event_x, xevent.event_y
-        selclient = self.selmon.selclient
-        if selclient and selclient.containspoint(point):
-            return
-        self.focuspoint(point)
+        if xevent.window == self.root:
+            point = self.cursorx, self.cursory = xevent.event_x, xevent.event_y
+            selclient = self.selmon.selclient
+            if not(selclient and selclient.containspoint(point)):
+                self.focuspoint(point)
 
     def propertynotify(self, xevent):
         return NotImplemented
@@ -484,7 +478,7 @@ def monocole(wm, monitor):
     if monitor.selclient:
         x, y = monitor.screen.x, monitor.screen.y
         width, height = monitor.screen.width, monitor.screen.height
-        monitor.selclient.resize(x, y, width, height)
+        monitor.selclient.resize(x, y, width, height, 0)
 
 
 def focusnext(wm):
@@ -516,32 +510,13 @@ def flop_mons(wm):
     wm.focusmouse()
 
 
-def showall(wm):
-    for client in wm.clients():
-        client.show(False)
-    wm.arrange()
-
-
-def toggleall(wm):
-    for client in wm.clients():
-        client.showhide(False)
-    wm.arrange()
-
-
-procs = []
-
-
-def spawn(cmd):
-    global procs
-    procs.append(Popen(cmd, shell=True, stdin=DN, stdout=DN))
-    [p.wait() for p in procs if p.poll() is not None]
-
-
-run = fn(lambda cmd: spawn(cmd))
+run = fn(lambda cmd: Popen(cmd, shell=True, stdin=DN, stdout=DN))
 lazy = fn(lambda cmd: (lambda wm: run(cmd)))
 to_dwm = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("dwm", ["dwm"])))
 restart = fn(lambda wm: (wm and wm.dpy.close(), os.execvp("pywm", ["pywm"])))
+showall = fn(lambda wm: ([c.show() for c in wm.clients()]))
 dmenu_run = fn(lambda wm: run(f"dmenu_run -m {wm.monitors.index(wm.selmon)}"))
+toggleall = fn(lambda wm: ([c.showhide() for c in wm.clients()]))
 
 
 def main():
