@@ -26,6 +26,7 @@ class Client:
         self.window = window
         self.monitor = monitor
         self.wm = monitor.wm
+        self.transient = transient
         self.isfullscreen = False
         self.visible = True
         mask = X.EnterWindowMask | X.StructureNotifyMask
