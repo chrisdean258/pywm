@@ -10,6 +10,7 @@ from Xlib import XK
 from Xlib import Xatom
 from Xlib import Xcursorfont
 from Xlib.display import Display
+from Xlib.error import BadDrawable
 from Xlib.protocol.event import ClientMessage
 from Xlib.protocol.event import ConfigureNotify
 from subprocess import DEVNULL as DN, Popen
@@ -75,9 +76,12 @@ class Client:
         x, y = point
         if not self.visible:
             return False
-        geom = self.window.get_geometry()
-        if geom.x <= x < geom.x + geom.width:
-            return geom.y <= y < geom.y + geom.width
+        try:
+            geom = self.window.get_geometry()
+            if geom.x <= x < geom.x + geom.width:
+                return geom.y <= y < geom.y + geom.width
+        except BadDrawable:
+            return False
 
     def fullscreen(self, full=True):
         NET_WM_STATE = self.wm.NET_WM_STATE
@@ -307,6 +311,7 @@ class WindowManager:
             client.focus()
 
     def focusin(self, xevent):
+        return None
         if xevent.window != self.selmon.selclient.window:
             client = self.windowtoclient(xevent.window)
             if client:
@@ -356,8 +361,12 @@ class WindowManager:
         self.selmon.killclient()
 
     def maprequest(self, xevent):
-        self.selmon.createclient(xevent.window)
-        self.arrange(self.selmon)
+        w = xevent.window.get_wm_transient_for()
+        mon = self.selmon
+        if w:
+            mon = self.windowtomonitor(w)
+        mon.createclient(xevent.window)
+        self.arrange(mon)
 
     def mappingnotify(self, xevent):
         self.dpy.refresh_keyboard_mapping(xevent)
@@ -550,7 +559,11 @@ def main():
     }
     layouts = [tile, monocole]
     wm = WindowManager(keys, layouts)
-    wm.run()
+    try:
+        wm.run()
+    except Exception:
+        showall(wm)
+        raise
 
 
 if __name__ == "__main__":
