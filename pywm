@@ -22,7 +22,7 @@ def fn(a):
 
 
 class Client:
-    def __init__(self, window, monitor):
+    def __init__(self, window, monitor, transient=False):
         self.window = window
         self.monitor = monitor
         self.wm = monitor.wm
@@ -150,7 +150,7 @@ class Monitor:
 
     @property
     def visible(self):
-        return [c for c in self.clients if c.visible]
+        return [c for c in self.clients if c.visible and not c.transient]
 
     def addclient(self, client, focus=False):
         client.monitor = self
@@ -162,8 +162,8 @@ class Monitor:
     def arrange(self):
         self.wm.arrange(self)
 
-    def createclient(self, window, focus=True):
-        self.addclient(Client(window, self), focus)
+    def createclient(self, window, focus=True, transient=False):
+        self.addclient(Client(window, self, transient), focus)
 
     def focus(self):
         self.wm.selmon = self
@@ -365,7 +365,7 @@ class WindowManager:
         mon = self.selmon
         if w:
             mon = self.windowtomonitor(w)
-        mon.createclient(xevent.window)
+        mon.createclient(xevent.window, focus=True, transient=w is not None)
         self.arrange(mon)
 
     def mappingnotify(self, xevent):
